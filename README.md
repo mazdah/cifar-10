@@ -1,0 +1,3 @@
+# cifar-10
+CNN 공부를 위해 cifa-10 소스 분석 중...
+ - cifar10_train.py 주석 완료

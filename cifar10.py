@@ -62,7 +62,7 @@ NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAI
 NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
 
-# Constants describing the training process.
+# Constants describing the training process.`
 MOVING_AVERAGE_DECAY = 0.9999     # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 350.0      # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = 0.1  # Learning rate decay factor.
@@ -111,7 +111,7 @@ def _variable_on_cpu(name, shape, initializer):
     var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
   return var
 
-
+# 필터(가중치)를 생성하여 반환하는 함수
 def _variable_with_weight_decay(name, shape, stddev, wd):
   """Helper to create an initialized Variable with weight decay.
 
@@ -128,11 +128,22 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
   Returns:
     Variable Tensor
   """
+
+  # 데이터 타입은 tf.float32로 사용한다. 아래 코드는 python에서의 3항 연산자로 if 조건절이 참이면 맨 앞의 값이 사용되고
+  # 조건절이 거짓이면 else문이 사용된다. 이 소스에서는 FLAGS.use_fp16값이 False로 설정되어 있으므로 tf.float32가 사용된다
   dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
+  # tf.get_variable을 이용하여 변수를 만든다. 이름과 shape는 인자로 전달받은 값을 사용하며 initializer는
+  # tf.truncated_normal_initializer를 사용한다. tf.truncated_normal_initializer는
+  # truncated normal distribution(절단된 정규분포)를 이용하여 초기화 하는데 이 절단된 정규분포는 정규분포에서 좌우측의 표준편차를
+  # 벗어난 영역을 잘라내고 남은 부분으로 다시 정규분포를 만들어 사용하는 것으로 신경망의 가중치나 필터 생성 시 권장되는 초기화 방법이다.
+  # 인자로 전달되는 값은 표준편차(stddev)와 데이터 타입이다.
   var = _variable_on_cpu(
       name,
       shape,
       tf.truncated_normal_initializer(stddev=stddev, dtype=dtype))
+  # 인자로 전달된 wd 값이 None이 아니라면 가중치 감소(weight decay)를 수행한다. 가중치 감소는 학습에서의 과적합(overfitting) 문제가
+  # 가중치 값이 커서 발생하는 경우가 많으므로 큰 가중치에 대해 큰 페널티를 부여하는 방법으로 과적합을 막는 것이다. 이 소스에서는 필터 생성시에는
+  # 사용하지 않고 fully connected 계층에서 가중치를 만들 때는 사용을 한다.
   if wd is not None:
     weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
     tf.add_to_collection('losses', weight_decay)
@@ -192,7 +203,8 @@ def inputs(eval_data):
     labels = tf.cast(labels, tf.float16)
   return images, labels
 
-
+# 예측 모델을 만드는 함수
+# distorted_inputs() 함수를 통해 반환된 4D 텐서를 인자로 받는다.
 def inference(images):
   """Build the CIFAR-10 model.
 
@@ -207,8 +219,30 @@ def inference(images):
   # If we only ran this model on a single GPU, we could simplify this function
   # by replacing all instances of tf.get_variable() with tf.Variable().
   #
+  # 다중 GPU에서 학습을 시킬 경우를 상정하여 생성된 변수를 공유하기 위해 tf.Variable() 대신 tf.get_variable()을 사용하고 있다.
+  # 만일 단일 GPU에서 실행하고자 한다면 간단하게 모든 tf.get_variable() 인스턴스들을 tf.Variable()로 바꾸기만 하면 된다.
+  # 코드의 윗부분에 선언된 _variable_on_cpu 함수에서 tf.get_variable()을 통해 변수를 생성한다. 이렇게 생성된 변수는 내부적으로
+  # 현재 scope 이름을 prefix로 하여 다른 변수와 구분된다.
+  #
+  # tf.get_variable()는 인자로 전달된 이름의 변수가 없으면 새로 생성하고 동일한 이름의 변수가 있다면 그 변수를 반환하여 재활용한다.
+  # 보통 이름과 shape를 인자로 넘겨 변수를 생성 또는 재사용하며 여기서는 이름과 shape 그리고 initializer를 인자로 사용하고 있다.
+  #
   # conv1
+  # 첫 번째 convolutional 계층
+  # tf.variable_scope()는 context manager로 tf.get_variable()와 함께 변수를 공유하고자 할 때 쓰인다.
+  # 'conv1'이라는 이름으로 만들어진 아래 scope 안에서 만들어진 변수들은 내부적으로 conv1/변수명 형태로 사용된다.
+  # 예를 들어 아래 코드 중 conv1의 biases와 conv2의 biases를 각각 print해보면 다음과 같이 출력된다.
+  # <tf.Variable 'conv1/biases:0' shape=(64,) dtype=float32_ref>
+  # <tf.Variable 'conv2/biases:0' shape=(64,) dtype=float32_ref>
+  #
+  # 즉 biases라는 변수는 각각 conv1과 conv2라는 다른 scope에 있기 때문에 동일한 이름으로 사용 가능하다.
+  # 하지만 서로 다른 scope에서 생성되었기 때문에 동일한 변수는 아니다.
+  #
+  # conv1이라는 이름으로 첫 번째 convolutional layer을 구성하기 위한 scope를 생성한다
   with tf.variable_scope('conv1') as scope:
+      # CNN에서 kernel은 보통 filter와 동일한 의미로 사용된다. 따라서 kernel 변수는 [5, 5, 3, 64]의 4D 텐서로 구성된
+      # 필터를 만든 것이다. wd는 가중치 감소(weight decay) 적용 여부를 의미하는 인자로 필터 생성시에는 적용하지 않는다.
+      # 보다 상세한 내용은 _variable_with_weight_decay 함수에서 설명한다.
     kernel = _variable_with_weight_decay('weights',
                                          shape=[5, 5, 3, 64],
                                          stddev=5e-2,

@@ -144,8 +144,22 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
   # 인자로 전달된 wd 값이 None이 아니라면 가중치 감소(weight decay)를 수행한다. 가중치 감소는 학습에서의 과적합(overfitting) 문제가
   # 가중치 값이 커서 발생하는 경우가 많으므로 큰 가중치에 대해 큰 페널티를 부여하는 방법으로 과적합을 막는 것이다. 이 소스에서는 필터 생성시에는
   # 사용하지 않고 fully connected 계층에서 가중치를 만들 때는 사용을 한다.
+  #
   if wd is not None:
+      # 여기서는 L2 정규화(Regularization)을 사용하는데 이 것은 가중치에 대해 1/2 * 𝛌𝒘**2 항을 오차함수에 추가하여 구현한다. 이렇게 할 경우
+      # 모든 가중치가 선형적으로 감소하게 되는데 이러한 현상 때문에 가중치 감쇠(감소, weight decay)라고 부른다. 여기서 𝛌는 정규화의 강도를
+      # 나타내며 𝛌가 크면 정규화를 강하게 사용하는 것이고 𝛌가 0이라면 정규화를 사용하지 않는 것이다.
+      #
+      # 아래 구현 내용 중 tf.nn.l2_loss 함수는 L2 정규화를 구현한 함수로 이 함수는 인자로 전달된 값을 다음 계산식으로 계산하여 반환한다.
+      #
+      #    sum(var ** 2) / 2
+      #
+      # 이 식은 L2 정규화의 1/2 * 𝒘**2이 되는 것이고 𝛌에 해당하는 값이 바로 인자로 받아온 wd 값이 된다.
+      #
+      # L2 정규화에서 1/2을 곱해주는 이유는 이 식을 w에 대해 편미분 할 때에 앞에 상수 2가 붙는 것을 회피하기 위해서이다.
+      #
     weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
+      # 최종 결정된 L2 정규화 값을 현재 그래프의 collection에 저장한다. collection은 몇번이고 다시 저장할 수 있다.
     tf.add_to_collection('losses', weight_decay)
   return var
 
@@ -153,7 +167,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
 # images는 [배치 크기, 이미지 높이, 이미지 넓이 채널수] 형태의 4차원 텐서이고
 # labels는 [배치 크기]를 가진 1차원 텐서이다.
 def distorted_inputs():
-  """Construct distorted input for CIFAR training using the Reader ops.
+  """Construct distorted input for CIFAR training using the Reader ops.`
 
   Returns:
     images: Images. 4D tensor of [batch_size, IMAGE_SIZE, IMAGE_SIZE, 3] size.
@@ -247,6 +261,8 @@ def inference(images):
                                          shape=[5, 5, 3, 64],
                                          stddev=5e-2,
                                          wd=None)
+      # convolutional 레이어를 만든다. 입력 이미지 텐서에 바로 위에서 생성한 필터를 적용하며 stride는 1로 지정하고 이미지 크기가
+      # 입력이미지와 동일하도록 padding은 SAME으로 지정한다.
     conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
     biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
     pre_activation = tf.nn.bias_add(conv, biases)
